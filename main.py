@@ -4,13 +4,13 @@ from dotenv import load_dotenv
 import os
 
 load_dotenv()
-SHEET_PATH = "sheets/rollercoin-sheet.xlsx"  # Ruta local del archivo Excel
-WORKSHEET_NAME = "PythonSheet"  # Nombre de la hoja específica
+SHEET_PATH = "sheets/rollercoin-scraper-sheet.xlsx"
+WORKSHEET_NAME = "PythonSheet"
 
 def convert_power(power_str):
     """Converts power from Gh/s, Th/s, or Ph/s to a numerical value."""
-
-    power_str = power_str.replace(",", "")  # Remove commas for large numbers
+    print(f"Converting power: {power_str}")
+    power_str = power_str.replace(",", "")
     if "Gh/s" in power_str:
         value = float(power_str.replace(" Gh/s", ""))
         return value
@@ -21,80 +21,134 @@ def convert_power(power_str):
         value = float(power_str.replace(" Ph/s", "")) * 1000000
         return value
     else:
-        return 0  # Return 0 if no unit is found
-
+        return 0
 
 def extract_html_data(html_content):
-    # Extracts specific data from all marketplace-buy-item-card elements.
-
+    print("Starting HTML extraction...")
     soup = BeautifulSoup(html_content, "html.parser")
     item_cards = soup.find_all("a", class_="marketplace-buy-item-card")
+    print(f"Found {len(item_cards)} item cards")
+    
     results = []
 
-    for card in item_cards:
+    for i, card in enumerate(item_cards):
         try:
-            price_str = card.find("p", class_="item-price").text.strip()
-            item_price = price_str.replace(" RLT", "")  # Remove RLT from price
-            power_str = card.find("span", class_="item-addition-power").text.strip()
+            print(f"Processing card {i+1}")
+            
+            # Precio
+            price_element = card.find("p", class_="item-price")
+            if not price_element:
+                print(f"  Price element not found in card {i+1}")
+                continue
+            price_str = price_element.text.strip()
+            item_price = price_str.replace(" RLT", "")
+            print(f"  Price: {item_price}")
+
+            # Power
+            power_element = card.find("span", class_="item-addition-power")
+            if not power_element:
+                print(f"  Power element not found in card {i+1}")
+                continue
+            power_str = power_element.text.strip()
             item_addition_power = convert_power(power_str)
-            item_addition_bonus = card.find(
-                "span", class_="item-addition-bonus"
-            ).text.strip()
+            print(f"  Power: {item_addition_power}")
+
+            # Bonus
+            bonus_element = card.find("span", class_="item-addition-bonus")
+            if not bonus_element:
+                print(f"  Bonus element not found in card {i+1}")
+                continue
+            item_addition_bonus = bonus_element.text.strip()
+            print(f"  Bonus: {item_addition_bonus}")
+
+            # Título y rareza
             item_title_str = card.find("p", class_="item-title")
-            rarity = (
-                item_title_str.find("span").text.strip()
-                if item_title_str.find("span")
-                else ""
-            )
+            if not item_title_str:
+                print(f"  Title element not found in card {i+1}")
+                continue
+                
+            rarity_span = item_title_str.find("span")
+            rarity = rarity_span.text.strip() if rarity_span else ""
             item_title = item_title_str.text.replace(rarity, "").strip()
+            print(f"  Title: {item_title}")
+            print(f"  Rarity: {rarity}")
 
-            results.append(
-                {
-                    "item_title": item_title,
-                    "rarity": rarity,
-                    "item_addition_power": item_addition_power,
-                    "item_addition_bonus": item_addition_bonus,
-                    "item_price": item_price,
-                }
-            )
-        except AttributeError:
-            print("Elements not found within an item-card.")
-            continue
+            results.append({
+                "item_title": item_title,
+                "rarity": rarity,
+                "item_addition_power": item_addition_power,
+                "item_addition_bonus": item_addition_bonus,
+                "item_price": item_price,
+            })
+            print(f"  ✓ Successfully processed card {i+1}")
+
         except Exception as e:
-            print(f"Error within an item-card: {e}")
+            print(f"  ✗ Error processing card {i+1}: {e}")
             continue
 
+    print(f"Extraction completed. Total items: {len(results)}")
     return results
 
+def safe_convert_bonus(bonus_value):
+    """Convierte de forma segura el valor de bonus a numérico"""
+    try:
+        if pd.isna(bonus_value):
+            return bonus_value
+            
+        if isinstance(bonus_value, (int, float)):
+            # Si ya es numérico, verificar si necesita división por 100
+            if bonus_value > 1:  # Si es porcentaje como 7.2 en lugar de 0.072
+                return bonus_value / 100
+            return bonus_value
+        elif isinstance(bonus_value, str):
+            # Si es texto, procesar normalmente
+            cleaned = bonus_value.replace('%', '').replace(',', '.')
+            numeric_value = pd.to_numeric(cleaned, errors='coerce')
+            return numeric_value / 100 if not pd.isna(numeric_value) else numeric_value
+        else:
+            return bonus_value
+    except Exception as e:
+        print(f"Error converting bonus value '{bonus_value}': {e}")
+        return bonus_value
 
 def update_excel_sheet(data):
-    # Crear el directorio si no existe
+    print(f"Updating Excel sheet with {len(data)} items")
+    
+    # Verificar directorio
     os.makedirs(os.path.dirname(SHEET_PATH), exist_ok=True)
+    print(f"Directory ensured: {os.path.dirname(SHEET_PATH)}")
     
     # Verificar si el archivo existe
-    if os.path.exists(SHEET_PATH):
+    file_exists = os.path.exists(SHEET_PATH)
+    print(f"Excel file exists: {file_exists}")
+    
+    if file_exists:
         try:
-            # Leer el archivo Excel completo
             excel_file = pd.ExcelFile(SHEET_PATH)
+            sheet_exists = WORKSHEET_NAME in excel_file.sheet_names
+            print(f"Worksheet '{WORKSHEET_NAME}' exists: {sheet_exists}")
             
-            # Verificar si la hoja existe
-            if WORKSHEET_NAME in excel_file.sheet_names:
+            if sheet_exists:
                 df = pd.read_excel(SHEET_PATH, sheet_name=WORKSHEET_NAME)
+                print(f"Loaded existing sheet with {len(df)} rows")
+                print(f"Column dtypes: {df.dtypes}")
             else:
-                # Crear nuevo DataFrame si la hoja no existe
                 df = pd.DataFrame(columns=["Miner", "Rarity", "Power", "% Bonus", "Price"])
-                print(f"Worksheet '{WORKSHEET_NAME}' not found. Creating new one.")
+                print("Created new DataFrame (sheet didn't exist)")
                 
         except Exception as e:
             print(f"Error reading Excel file: {e}")
-            # Crear nuevo DataFrame si hay error al leer
             df = pd.DataFrame(columns=["Miner", "Rarity", "Power", "% Bonus", "Price"])
     else:
-        # Crear nuevo DataFrame si el archivo no existe
         df = pd.DataFrame(columns=["Miner", "Rarity", "Power", "% Bonus", "Price"])
-        print(f"Excel file '{SHEET_PATH}' not found. Creating new one.")
+        print("Created new DataFrame (file didn't exist)")
+    
+    print(f"DataFrame shape before processing: {df.shape}")
     
     # Procesar cada item
+    new_items_count = 0
+    updated_items_count = 0
+    
     for item in data:
         item_title = item["item_title"].strip()
         item_power = item["item_addition_power"]
@@ -103,11 +157,16 @@ def update_excel_sheet(data):
         mask = (df["Miner"].astype(str).str.strip() == item_title) & (df["Power"] == item_power)
         
         if mask.any():
-            # Actualizar precio existente
-            df.loc[mask, "Price"] = item["item_price"]
-            print(f"Price updated for {item_title} ({item_power}): {item['item_price']}")
+            # Convertir el precio a float antes de asignar
+            try:
+                price_float = float(item["item_price"])
+                df.loc[mask, "Price"] = price_float
+                updated_items_count += 1
+                print(f"Price updated for {item_title} ({item_power}): {item['item_price']}")
+            except ValueError as e:
+                print(f"Error converting price '{item['item_price']}' to float: {e}")
+                continue
         else:
-            # Agregar nueva entrada
             new_row = {
                 "Miner": item["item_title"],
                 "Rarity": item["rarity"],
@@ -116,84 +175,84 @@ def update_excel_sheet(data):
                 "Price": item["item_price"]
             }
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+            new_items_count += 1
             print(f"New entry added: {item_title} ({item_power})")
     
-    # CONVERSIÓN DE TIPOS DE DATOS - PARTE CLAVE
+    print(f"Processing complete: {new_items_count} new, {updated_items_count} updated")
+    print(f"DataFrame shape after processing: {df.shape}")
+    
+    # Convertir tipos de datos DE FORMA SEGURA
     try:
-        # Convertir Power a numérico
+        print("Converting data types...")
+        
+        # Power - ya debería ser numérico
         df["Power"] = pd.to_numeric(df["Power"], errors='coerce')
+        print("  Power converted")
         
-        # Convertir % Bonus a porcentaje numérico
-        df["% Bonus"] = df["% Bonus"].str.replace('%', '').str.replace(',', '.')
-        df["% Bonus"] = pd.to_numeric(df["% Bonus"], errors='coerce') / 100
+        # % Bonus - conversión segura
+        df["% Bonus"] = df["% Bonus"].apply(safe_convert_bonus)
+        print("  % Bonus converted")
         
-        # Convertir Price a numérico
+        # Price - convertir a numérico
         df["Price"] = pd.to_numeric(df["Price"], errors='coerce')
+        print("  Price converted")
+        
+        print("Data types converted successfully")
+        print(f"Final dtypes: {df.dtypes}")
         
     except Exception as e:
-        print(f"Warning: Error converting data types: {e}")
+        print(f"Error converting data types: {e}")
     
     # Guardar el archivo Excel
     try:
-        # Si el archivo ya existe, necesitamos mantener las otras hojas
-        if os.path.exists(SHEET_PATH):
+        if file_exists:
+            print("Saving with mode 'a' (append/replace)...")
+            # Forzar cierre de cualquier conexión previa
+            import gc
+            gc.collect()
+            
             with pd.ExcelWriter(SHEET_PATH, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
                 df.to_excel(writer, sheet_name=WORKSHEET_NAME, index=False)
-                
-                # Obtener la hoja de trabajo para aplicar formatos
-                worksheet = writer.sheets[WORKSHEET_NAME]
-                
-                # Aplicar formato de porcentaje a la columna % Bonus
-                for row in range(2, len(df) + 2):  # +2 porque Excel empieza en 1 y tiene headers
-                    cell = worksheet.cell(row=row, column=4)  # Columna D (% Bonus)
-                    cell.number_format = '0.00%'
-                    
-                # Aplicar formato numérico a la columna Price
-                for row in range(2, len(df) + 2):
-                    cell = worksheet.cell(row=row, column=5)  # Columna E (Price)
-                    cell.number_format = '0.00'
-                    
+                print("  File saved successfully")
         else:
-            # Si el archivo no existe, crear uno nuevo
+            print("Saving with mode 'w' (new file)...")
             with pd.ExcelWriter(SHEET_PATH, engine='openpyxl') as writer:
                 df.to_excel(writer, sheet_name=WORKSHEET_NAME, index=False)
-                
-                # Aplicar formatos
-                worksheet = writer.sheets[WORKSHEET_NAME]
-                
-                # Formato de porcentaje para % Bonus
-                for row in range(2, len(df) + 2):
-                    cell = worksheet.cell(row=row, column=4)
-                    cell.number_format = '0.00%'
-                    
-                # Formato numérico para Price
-                for row in range(2, len(df) + 2):
-                    cell = worksheet.cell(row=row, column=5)
-                    cell.number_format = '0.00'
+                print("  New file created successfully")
             
-        print(f"Data saved to sheet '{WORKSHEET_NAME}' in {SHEET_PATH}")
+        print(f"✓ Successfully saved to {SHEET_PATH}")
+        print(f"✓ Worksheet: {WORKSHEET_NAME}")
+        print(f"✓ Total rows: {len(df)}")
+        
+        # Verificar que el archivo se actualizó
+        if os.path.exists(SHEET_PATH):
+            file_size = os.path.getsize(SHEET_PATH)
+            print(f"✓ File size: {file_size} bytes")
+            # Leer de nuevo para verificar
+            verify_df = pd.read_excel(SHEET_PATH, sheet_name=WORKSHEET_NAME)
+            print(f"✓ Verification: {len(verify_df)} rows in saved file")
         
     except Exception as e:
-        print(f"Error saving Excel file: {e}")
-        # Intentar guardar como nuevo archivo
+        print(f"✗ Error saving Excel file: {e}")
+        # Backup como CSV
         try:
-            df.to_excel(SHEET_PATH, sheet_name=WORKSHEET_NAME, index=False)
-            print(f"Data saved to new file: {SHEET_PATH}")
-        except Exception as e2:
-            print(f"Critical error: {e2}")
-            # Respaldo como CSV
             backup_path = SHEET_PATH.replace('.xlsx', '_backup.csv')
             df.to_csv(backup_path, index=False)
             print(f"Backup saved to {backup_path}")
-
+        except Exception as e2:
+            print(f"✗ Critical error: {e2}")
 
 if __name__ == "__main__":
     print("Please enter the HTML content (from marketplace-buy-items-list):")
     html_content = input()
 
     try:
+        print("Starting script execution...")
         data = extract_html_data(html_content)
-        update_excel_sheet(data)
-        print("\nOperation completed.")
+        if data:
+            update_excel_sheet(data)
+            print("\n✓ Operation completed successfully!")
+        else:
+            print("\n✗ No data extracted from HTML content")
     except Exception as e:
-        print(f"General error: {e}")
+        print(f"\n✗ General error: {e}")
