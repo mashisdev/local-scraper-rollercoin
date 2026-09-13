@@ -20,6 +20,12 @@ def convert_power(power_str):
     elif "Ph/s" in power_str:
         value = float(power_str.replace(" Ph/s", "")) * 1000000
         return value
+    elif "Eh/s" in power_str:
+        value = float(power_str.replace(" Eh/s", "")) * 1000000000
+        return value
+    elif "Zh/s" in power_str:
+        value = float(power_str.replace(" Zh/s", "")) * 1000000000000
+        return value
     else:
         return 0
 
